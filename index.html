@@ -261,6 +261,7 @@
                 biuAmountWei = biuMintedBN.mul(new web3.utils.BN(percentage)).div(new web3.utils.BN(100));
             }
             document.getElementById('burnBiuInput').value = parseFloat(web3.utils.fromWei(biuAmountWei.toString(), 'ether')).toFixed(18);
+            await updateBalances();
         }
 
         async function checkAndApproveWoof() {
@@ -322,9 +323,9 @@
                 const biuBalanceBN = new web3.utils.BN(biuBalance);
                 const biuMintedBN = new web3.utils.BN(biuMinted);
                 const biuWeiBN = new web3.utils.BN(biuWei);
+                if (biuBalanceBN.lt(biuWeiBN)) throw new Error('Insufficient BIU balance to burn');
                 if (biuWeiBN.gt(biuMintedBN)) throw new Error('Cannot burn more BIU than minted');
                 if (biuWeiBN.lt(web3.utils.toBN(web3.utils.toWei('0.000000000000001', 'ether')))) throw new Error('Amount must be at least 0.000000000000001 BIU');
-                if (biuBalanceBN.lt(biuWeiBN)) throw new Error('Insufficient BIU balance');
                 showModal(`Burning ${biuAmount} BIU...`);
                 await contract.methods.burn(biuWei).send({ from: accounts[0], gas: 200000 });
                 showModal('Burn successful!');
