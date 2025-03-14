@@ -90,7 +90,7 @@
                 <button id="burnButton">Burn</button>
             </div>
             <div class="input-group">
-                <input type="number" id="burnBiuInput" placeholder="BIU Amount" step="any" min="0">
+                <input type="number" id="burnBiuInput" placeholder="BIU Amount" step="any" min="0" oninput="restrictBurnInput()">
             </div>
             <div class="percentage-buttons">
                 <button class="percentage-btn" onclick="setBurnPercentage(25)">25%</button>
@@ -197,17 +197,18 @@
             ]);
             const collateral = userData[0];
             const biuMinted = userData[1];
+            const biuBalanceBN = new web3.utils.BN(biuBalance);
+            const biuMintedBN = new web3.utils.BN(biuMinted);
+            const maxBurnable = biuBalanceBN.lt(biuMintedBN) ? biuBalance : biuMinted;
             document.getElementById('biuBalance').innerText = `${parseFloat(web3.utils.fromWei(biuBalance, 'ether')).toFixed(18)} BIU`;
-            document.getElementById('biuMinted').innerText = `${parseFloat(web3.utils.fromWei(biuMinted, 'ether')).toFixed(18)} BIU`;
+            document.getElementById('biuMinted').innerText = `${parseFloat(web3.utils.fromWei(maxBurnable, 'ether')).toFixed(18)} BIU`;
             document.getElementById('woofBalance').innerText = `${parseFloat(web3.utils.fromWei(woofBalance, 'ether')).toFixed(18)} WOOF`;
             document.getElementById('userCollateral').innerText = `${parseFloat(web3.utils.fromWei(collateral, 'ether')).toFixed(18)} WOOF`;
             const mintButton = document.getElementById('mintButton');
             const burnButton = document.getElementById('burnButton');
             const woofBalanceBN = new web3.utils.BN(woofBalance);
-            const biuBalanceBN = new web3.utils.BN(biuBalance);
-            const biuMintedBN = new web3.utils.BN(biuMinted);
             mintButton.disabled = woofBalanceBN.lte(web3.utils.toBN(web3.utils.toWei('1', 'ether')));
-            burnButton.disabled = biuMintedBN.isZero() || biuBalanceBN.lt(biuMintedBN);
+            burnButton.disabled = biuBalanceBN.isZero() || maxBurnable === '0';
             await updateEstimatedBiu();
         }
 
@@ -233,35 +234,38 @@
         async function setMintPercentage(percentage) {
             if (!web3 || !contract || !accounts) { showModal('Please connect your wallet first!'); return; }
             const woofBalance = await woofContract.methods.balanceOf(accounts[0]).call();
-            let woofAmountWei;
-            if (percentage === 100) {
-                woofAmountWei = new web3.utils.BN(woofBalance).sub(new web3.utils.BN(web3.utils.toWei('1', 'ether')));
-                if (woofAmountWei.lt(new web3.utils.BN(0))) woofAmountWei = new web3.utils.BN(0);
-            } else {
-                woofAmountWei = new web3.utils.BN(woofBalance).mul(new web3.utils.BN(percentage)).div(new web3.utils.BN(100));
-            }
+            let woofAmountWei = percentage === 100 ? new web3.utils.BN(woofBalance).sub(new web3.utils.BN(web3.utils.toWei('1', 'ether'))) : new web3.utils.BN(woofBalance).mul(new web3.utils.BN(percentage)).div(new web3.utils.BN(100));
+            if (woofAmountWei.lt(new web3.utils.BN(0))) woofAmountWei = new web3.utils.BN(0);
             document.getElementById('mintWoofInput').value = parseFloat(web3.utils.fromWei(woofAmountWei.toString(), 'ether')).toFixed(18);
             await updateEstimatedBiu();
         }
 
         async function setBurnPercentage(percentage) {
             if (!web3 || !contract || !accounts) { showModal('Please connect your wallet first!'); return; }
-            const userData = await contract.methods.getUserData(accounts[0]).call();
+            const [biuBalance, userData] = await Promise.all([
+                contract.methods.balanceOf(accounts[0]).call(),
+                contract.methods.getUserData(accounts[0]).call()
+            ]);
             const biuMinted = userData[1];
+            const biuBalanceBN = new web3.utils.BN(biuBalance);
             const biuMintedBN = new web3.utils.BN(biuMinted);
-            if (biuMintedBN.isZero()) {
+            const maxBurnableBN = biuBalanceBN.lt(biuMintedBN) ? biuBalanceBN : biuMintedBN;
+            if (maxBurnableBN.isZero()) {
                 document.getElementById('burnBiuInput').value = '0';
                 return;
             }
-            let biuAmountWei;
-            if (percentage === 100) {
-                biuAmountWei = biuMintedBN.sub(new web3.utils.BN(web3.utils.toWei('0.000000000000001', 'ether')));
-                if (biuAmountWei.lt(new web3.utils.BN(0))) biuAmountWei = new web3.utils.BN(0);
-            } else {
-                biuAmountWei = biuMintedBN.mul(new web3.utils.BN(percentage)).div(new web3.utils.BN(100));
-            }
+            let biuAmountWei = percentage === 100 ? maxBurnableBN.sub(new web3.utils.BN(web3.utils.toWei('0.000000000000001', 'ether'))) : maxBurnableBN.mul(new web3.utils.BN(percentage)).div(new web3.utils.BN(100));
+            if (biuAmountWei.lt(new web3.utils.BN(0))) biuAmountWei = new web3.utils.BN(0);
             document.getElementById('burnBiuInput').value = parseFloat(web3.utils.fromWei(biuAmountWei.toString(), 'ether')).toFixed(18);
             await updateBalances();
+        }
+
+        function restrictBurnInput() {
+            const input = document.getElementById('burnBiuInput');
+            const biuMintedText = document.getElementById('biuMinted').innerText.split(' ')[0];
+            const maxBurnable = parseFloat(biuMintedText);
+            if (input.value && parseFloat(input.value) > maxBurnable) input.value = maxBurnable.toFixed(18);
+            if (input.value && parseFloat(input.value) < 0) input.value = '0';
         }
 
         async function checkAndApproveWoof() {
@@ -315,16 +319,10 @@
             burnButton.classList.add('loading');
             try {
                 const biuWei = web3.utils.toWei(biuAmount, 'ether');
-                const [biuBalance, userData] = await Promise.all([
-                    contract.methods.balanceOf(accounts[0]).call(),
-                    contract.methods.getUserData(accounts[0]).call()
-                ]);
-                const biuMinted = userData[1];
+                const biuBalance = await contract.methods.balanceOf(accounts[0]).call();
                 const biuBalanceBN = new web3.utils.BN(biuBalance);
-                const biuMintedBN = new web3.utils.BN(biuMinted);
                 const biuWeiBN = new web3.utils.BN(biuWei);
                 if (biuBalanceBN.lt(biuWeiBN)) throw new Error('Insufficient BIU balance to burn');
-                if (biuWeiBN.gt(biuMintedBN)) throw new Error('Cannot burn more BIU than minted');
                 if (biuWeiBN.lt(web3.utils.toBN(web3.utils.toWei('0.000000000000001', 'ether')))) throw new Error('Amount must be at least 0.000000000000001 BIU');
                 showModal(`Burning ${biuAmount} BIU...`);
                 await contract.methods.burn(biuWei).send({ from: accounts[0], gas: 200000 });
